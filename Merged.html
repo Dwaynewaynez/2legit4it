@@ -1,0 +1,62 @@
+<!-- 2Legit4it.html -->
+<!-- Unified Frontend for 2Legit4it Compliance/App Demo -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>2Legit4it - Unified Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Include clean styles or frameworks here -->
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f6f8fa; }
+    header { background: #333; color: #fafafa; padding: 1rem 2rem; font-size: 2rem; }
+    main { padding: 2rem; }
+    section { background: #fff; padding: 1.25rem; margin-bottom: 1.5rem; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.06);}
+    h2 { margin-top: 0; font-size: 1.3rem; }
+    .docutye-widget { background: #e1f2fb; color: #0575b6; padding: .75rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    .honeybadger-section { border-left: 5px solid #222; padding-left: 1rem; margin-top: 1.5rem;}
+    label { display: block; margin-top: 1rem;}
+    input, textarea { width: 100%; padding: .5rem; border-radius: 6px; border: 1px solid #ccc;}
+    button { background: #0575b6; color: #fff; padding: .65rem 1.4rem; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer;}
+    button:hover { background: #034e7b; }
+  </style>
+</head>
+<body>
+<header>
+  2Legit4it Compliance & Evidence Portal
+</header>
+<main>
+  <!-- Docutye.html merged: UI Status/Widget Section -->
+  <section class="docutye-widget">
+    <h2>Real-Time System Status</h2>
+    <ul>
+      <li>🕵️ Incident tracking enabled</li>
+      <li>🧾 Audit logging active</li>
+      <li>🚦 Accessibility Profile: Default</li>
+      <li>📝 All systems go—ready to escalate!</li>
+    </ul>
+  </section>
+
+  <!-- honeybadger.html merged: Main Dashboard Section -->
+  <section class="honeybadger-section">
+    <h2>Evidence & Escalation Dashboard</h2>
+    <form>
+      <label for="incident">Incident description/fact:</label>
+      <textarea id="incident" placeholder="Type case fact or evidence here"></textarea>
+      <label for="priority">Priority/Escalation Level:</label>
+      <select id="priority">
+        <option value="normal">Normal</option>
+        <option value="urgent">Urgent</option>
+        <option value="critical">Critical</option>
+      </select>
+      <label for="file">Attach legal doc or PDF:</label>
+      <input type="file" id="file" accept=".pdf,.docx,.jpg,.png">
+      <button type="submit">Add to Audit/Evidence</button>
+    </form>
+    <hr>
+    <p>⚖️ Use this portal to upload facts, escalate complaints, and generate a clean, compliant audit trail—Honey Badger style.</p>
+  </section>
+</main>
+</body>
+</html>
