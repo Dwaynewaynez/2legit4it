@@ -1,126 +1,235 @@
-"""
-2legit4it Monster Suite
-Unified engine - All main features, choose and run from simple menu
-"""
-
 import sqlite3
 import hashlib
+import hmac
 import json
-import datetime
+import os
+import zipfile
+from datetime import datetime
+from getpass import getuser
 
-def forensic_audit():
-    print("Log a specific action/user/details into the forensic audit database")
-    action = input("Action: ")
-    user = input("User: ")
-    details = input("Details: ")
-    conn = sqlite3.connect("2legit4itdb.sqlite")
+DBPATH = "codingdemon.db"
+HMACKEY = b"CHANGETHISTOASTRONGSECRETKEY"
+OWNER = "Dwayne Anthony Brian Galloway"
+
+def initdb():
+    conn = sqlite3.connect(DBPATH)
     cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS forensicaudit (
-            id INTEGER PRIMARY KEY,
-            action TEXT,
-            user TEXT,
-            details TEXT,
-            timestamp TEXT
-        )
+    cur.executescript("""
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY, name TEXT, createdts TEXT, owner TEXT
+    );
+    CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY, projectid INTEGER, date TEXT, description TEXT,
+        evidencelink TEXT, hash TEXT,
+        FOREIGN KEY(projectid) REFERENCES projects(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS auditlog (
+        id INTEGER PRIMARY KEY, ts TEXT, actor TEXT, action TEXT, details TEXT
+    );
+    CREATE TABLE IF NOT EXISTS collaborators (
+        id INTEGER PRIMARY KEY, projectid INTEGER, user TEXT,
+        FOREIGN KEY(projectid) REFERENCES projects(id) ON DELETE CASCADE
+    );
     """)
-    timestamp = datetime.datetime.utcnow().isoformat("T")
-    cur.execute("INSERT INTO forensicaudit (action, user, details, timestamp) VALUES (?, ?, ?, ?)", 
-                (action, user, details, timestamp))
     conn.commit()
     conn.close()
-    print("Audit logged!")
 
-def manifest_generator():
-    print("Generate a manifest for tracked files with SHA256 hashes")
-    project = input("Project name: ")
-    contributors = input("Contributors (comma separated): ").split(",")
-    files = input("File paths (comma separated): ").split(",")
+def getinput(prompt, required=True):
+    while True:
+        value = input(prompt).strip()
+        if not value and required:
+            print("Required. Please enter a value.")
+        else:
+            return value
+
+def filehashsha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def manifesthmac(data, key=HMACKEY):
+    return hmac.new(key, data, hashlib.sha256).hexdigest()
+
+def logaudit(action, actor, details):
+    ts = datetime.utcnow().isoformat() + "Z"
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO auditlog(ts, actor, action, details) VALUES (?, ?, ?, ?)",
+        (ts, actor, action, details)
+    )
+    conn.commit()
+    conn.close()
+
+def createproject():
+    name = getinput("Enter new project name: ")
+    ts = datetime.utcnow().isoformat() + "Z"
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO projects(name, createdts, owner) VALUES (?, ?, ?)",
+        (name, ts, OWNER)
+    )
+    pid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    logaudit("create_project", getuser(), f"project_id={pid}, name={name}")
+    print(f"OK. Project created. ID {pid}")
+    return pid
+
+def listprojects():
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, createdts FROM projects")
+    rows = cur.fetchall()
+    conn.close()
+    return rows
+
+def addcollaborator(pid):
+    user = getinput("Enter collaborator username: ")
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO collaborators(projectid, user) VALUES (?, ?)",
+        (pid, user)
+    )
+    conn.commit()
+    conn.close()
+    logaudit("add_collaborator", getuser(), f"project_id={pid}, collaborator={user}")
+    print("Collaborator added.")
+
+def addfact(pid):
+    desc = getinput("Describe the fact, issue, or piece of code: ")
+    ev = getinput("Attach an evidence file path (leave blank for none): ", required=False)
+    h = None
+    evidencelink = None
+    if ev:
+        if not os.path.exists(ev):
+            print("File not found. Skipping attachment.")
+        else:
+            h = filehashsha256(ev)
+            evidencelink = os.path.abspath(ev)
+    ts = datetime.utcnow().isoformat() + "Z"
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO facts(projectid, date, description, evidencelink, hash) VALUES (?, ?, ?, ?, ?)",
+        (pid, ts, desc, evidencelink, h)
+    )
+    fid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    logaudit("add_fact", getuser(), f"project_id={pid}, fact_id={fid}")
+    print(f"OK. Fact added. ID {fid}")
+
+def listfacts(pid):
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute("SELECT id, date, description FROM facts WHERE projectid = ?", (pid,))
+    rows = cur.fetchall()
+    conn.close()
+    if not rows:
+        print("No facts recorded for this project.")
+    for fid, date, desc in rows:
+        print(f"- {fid} | {date} | {desc[:70]}...")
+
+def exportevidencepack(pid):
+    conn = sqlite3.connect(DBPATH)
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM projects WHERE id = ?", (pid,))
+    project = cur.fetchone()
+    if not project:
+        print("No such project.")
+        return
+    pname = project[0]
+    cur.execute("SELECT * FROM facts WHERE projectid = ?", (pid,))
+    facts = cur.fetchall()
+    exportzip = f"{pname}_evidencepack.zip"
     manifest = {
-        "project": project,
-        "contributors": contributors,
-        "generated": datetime.datetime.utcnow().isoformat(),
-        "files": []
+        "owner": OWNER,
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "project": pname,
+        "facts": []
     }
-    for fpath in files:
-        fpath = fpath.strip()
-        try:
-            with open(fpath, "rb") as f:
-                content = f.read()
-                fhash = hashlib.sha256(content).hexdigest()
-                manifest["files"].append({
-                    "name": fpath,
-                    "sha256": fhash
-                })
-        except Exception as e:
-            manifest["files"].append({
-                "name": fpath,
-                "error": str(e)
-            })
-    print(json.dumps(manifest, indent=2))
+    z = zipfile.ZipFile(exportzip, "w", zipfile.ZIP_DEFLATED)
+    for fact in facts:
+        fid, _, date, desc, link, filehash = fact
+        item = {
+            "id": fid, "date": date, "description": desc,
+            "evidence_link": link, "hash": filehash
+        }
+        manifest["facts"].append(item)
+        # Embed watermark to every description
+        descwm = f"{desc}
+---C 2025 Dwayne Anthony Brian Galloway. All Rights Reserved."
+        z.writestr(f"fact_{fid}.txt", descwm)
+        if link and os.path.exists(link):
+            z.write(link, arcname=os.path.basename(link))
+    manifestbytes = json.dumps(manifest, sort_keys=True, indent=2).encode("utf-8")
+    z.writestr("manifest.json", json.dumps(manifest, indent=2))
+    z.writestr("manifest.sig", manifesthmac(manifestbytes))
+    z.close()
+    logaudit("export_evidence_pack", getuser(), f"project_id={pid}, output={exportzip}")
+    print(f"OK. Exported {exportzip}")
 
-def multiuser_collaboration():
-    print("Add a user to a project team for collaboration")
-    project = input("Project: ")
-    user = input("User: ")
-    role = input("Role: ")
-    conn = sqlite3.connect("2legit4itdb.sqlite")
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS team (
-            id INTEGER PRIMARY KEY,
-            project TEXT,
-            user TEXT,
-            role TEXT
-        )
-    """)
-    cur.execute("INSERT INTO team (project, user, role) VALUES (?, ?, ?)", (project, user, role))
-    conn.commit()
-    conn.close()
-    print(f"{user} added to {project} as {role}")
+def onboarding():
+    print("Coding Demon Protocol")
+    print(f"C 2025 {OWNER}. All Rights Reserved.
+")
+    print("Before you use this tool, you must acknowledge and agree to the following:")
+    print("- 10% of all revenues generated via Coding Demon, its code, or derivative outputs are contractually owed to Dwayne Anthony Brian Galloway as royalty, in perpetuity.")
+    print("- You accept that every output will be watermarked and cryptographically attributed.")
+    print("- Use of this platform constitutes irrevocable acceptance of these terms.")
+    ans = input("Type I AGREE to continue: ").strip()
+    if ans.lower() != "i agree":
+        print("Agreement not accepted. Exiting.")
+        exit(1)
 
-def access_control():
-    print("Grant a permission to a user")
-    user = input("User: ")
-    permission = input("Permission: ")
-    conn = sqlite3.connect("2legit4itdb.sqlite")
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS permissions (
-            id INTEGER PRIMARY KEY,
-            user TEXT,
-            permission TEXT
-        )
-    """)
-    cur.execute("INSERT INTO permissions (user, permission) VALUES (?, ?)", (user, permission))
-    conn.commit()
-    conn.close()
-    print(f"{user} now has permission: {permission}")
-
-def menu():
-    functions = [
-        ("Forensic Audit", forensic_audit),
-        ("Manifest Generator", manifest_generator),
-        ("Multiuser Collaboration", multiuser_collaboration),
-        ("Access Control", access_control)
-    ]
+def mainmenu():
+    onboarding()
+    initdb()
+    print("
+Menu")
     while True:
         print("
-2legit4it Main Menu")
-        for i, (name, _) in enumerate(functions):
-            print(f"{i+1}. {name}")
+1. Create a new project/session")
+        print("2. List projects")
+        print("3. Add collaborator to project")
+        print("4. Add fact/evidence/issue to project")
+        print("5. List project facts")
+        print("6. Export evidence/compliance package (.zip)")
         print("0. Exit")
-        choice = input("Select action: ")
-        if choice == "0":
-            break
         try:
-            index = int(choice) - 1
-            if 0 <= index < len(functions):
-                functions[index][1]()
-            else:
-                print("Invalid option!")
-        except Exception as e:
-            print(f"Error: {e}")
+            sel = int(getinput("Select: "))
+        except ValueError:
+            print("Enter a number.")
+            continue
+        if sel == 1:
+            createproject()
+        elif sel == 2:
+            projects = listprojects()
+            for pid, name, ts in projects:
+                print(f"- {pid} | {name} | Created {ts}")
+        elif sel == 3:
+            pid = int(getinput("Enter Project ID: "))
+            addcollaborator(pid)
+        elif sel == 4:
+            pid = int(getinput("Enter Project ID: "))
+            addfact(pid)
+        elif sel == 5:
+            pid = int(getinput("Enter Project ID: "))
+            listfacts(pid)
+        elif sel == 6:
+            pid = int(getinput("Enter Project ID: "))
+            exportevidencepack(pid)
+        elif sel == 0:
+            print("Goodbye.")
+            break
+        else:
+            print("Invalid selection.")
 
 if __name__ == "__main__":
-    menu()
+    mainmenu()
